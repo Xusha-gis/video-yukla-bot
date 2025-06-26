@@ -4,10 +4,14 @@
 import os
 import asyncio
 import yt_dlp
-from aiogram import Bot, Dispatcher, types, executor
+from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils import executor  # to'g'ri joydan import qilish
 
-API_TOKEN = '7460266609:AAF2ocLke6qzSLIBd03RsaiKRqb0NVkjkmAE'
+API_TOKEN = os.getenv('API_TOKEN')  # Telegram tokenni environment variable orqali oling
+
+if not API_TOKEN:
+    raise ValueError("API_TOKEN topilmadi. Iltimos, Render environment sozlamasidan token qo‘shing.")
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
