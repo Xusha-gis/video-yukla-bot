@@ -1,105 +1,58 @@
-# Universal Video Downloader Telegram Bot
-# Dependencies: aiogram, yt-dlp, ffmpeg-python
-
 import os
-import asyncio
-import yt_dlp
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor  # to'g'ri joydan import qilish
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from database import Database
+from config import Config
+from handlers import *
 
-API_TOKEN = os.getenv('API_TOKEN')  # Telegram tokenni environment variable orqali oling
+# Log konfiguratsiyasi
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-if not API_TOKEN:
-    raise ValueError("API_TOKEN topilmadi. Iltimos, Render environment sozlamasidan token qo‘shing.")
+class PremiumBot:
+    def __init__(self):
+        self.db = Database()
+        self.config = Config()
+    
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await handle_start(update, context, self.db, self.config)
+    
+    async def check_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await handle_check_subscription(update, context, self.db)
+    
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Xatolik: {context.error}")
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+def main():
+    bot = PremiumBot()
+    
+    # Bot ilovasini yaratish
+    application = Application.builder().token(bot.config.BOT_TOKEN).build()
+    
+    # Handlers
+    application.add_handler(CommandHandler("start", bot.start))
+    application.add_handler(CommandHandler("check", bot.check_subscription))
+    application.add_handler(CommandHandler("stats", handle_stats))
+    application.add_handler(CommandHandler("broadcast", handle_broadcast))
+    application.add_handler(CommandHandler("adduser", handle_add_user))
+    application.add_handler(CommandHandler("removeuser", handle_remove_user))
+    
+    application.add_handler(CallbackQueryHandler(handle_subscription_callback, pattern="^sub_"))
+    application.add_handler(CallbackQueryHandler(handle_payment_callback, pattern="^pay_"))
+    application.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^admin_"))
+    
+    application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
+    application.add_handler(MessageHandler(filters.DOCUMENT, handle_receipt))
+    
+    application.add_error_handler(bot.error_handler)
+    
+    # Botni ishga tushirish
+    print("Bot ishga tushdi...")
+    application.run_polling()
 
-download_dir = "downloads"
-os.makedirs(download_dir, exist_ok=True)
-
-# === Helper Function ===
-def get_formats(url):
-    ydl_opts = {
-        'quiet': True,
-        'skip_download': True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        formats = info.get("formats", [])
-        results = []
-        for f in formats:
-            if f.get("ext") == "mp4" and f.get("filesize") and f.get("height"):
-                results.append({
-                    "format_id": f["format_id"],
-                    "height": f["height"],
-                    "filesize": f["filesize"],
-                    "url": url
-                })
-        return sorted(results, key=lambda x: x["height"])
-
-# === Start Command ===
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    await message.reply("Assalomu alaykum! Video yuklovchi botga xush kelibsiz. Video link yuboring.")
-
-# === Handle Video URL ===
-@dp.message_handler()
-async def handle_url(message: types.Message):
-    url = message.text.strip()
-    await message.reply("Video tahlil qilinmoqda...")
-
-    try:
-        formats = get_formats(url)
-        if not formats:
-            await message.reply("Video topilmadi yoki formatlar mavjud emas.")
-            return
-
-        kb = InlineKeyboardMarkup()
-        for f in formats:
-            size_mb = round(f["filesize"] / 1024 / 1024, 2)
-            if size_mb <= 2000:
-                kb.add(InlineKeyboardButton(
-                    f"Yuklab olish - {f['height']}p ({size_mb} MB)",
-                    callback_data=f"dl|{f['format_id']}|{f['url']}"
-                ))
-        await message.reply("Sifatni tanlang:", reply_markup=kb)
-
-    except Exception as e:
-        await message.reply(f"Xatolik yuz berdi: {e}")
-
-# === Callback for Download ===
-@dp.callback_query_handler(lambda c: c.data.startswith("dl|"))
-async def process_callback(callback_query: types.CallbackQuery):
-    _, fmt_id, url = callback_query.data.split("|")
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "Yuklab olinmoqda...")
-
-    file_path = os.path.join(download_dir, f"video_{fmt_id}.mp4")
-
-    ydl_opts = {
-        'format': fmt_id,
-        'outtmpl': file_path,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        size_mb = os.path.getsize(file_path) / 1024 / 1024
-        if size_mb > 2000:
-            await bot.send_message(callback_query.from_user.id, "Fayl hajmi 2GB dan katta. Pastroq sifat tanlang.")
-        else:
-            with open(file_path, "rb") as video:
-                await bot.send_video(callback_query.from_user.id, video)
-
-    except Exception as e:
-        await bot.send_message(callback_query.from_user.id, f"Yuklab olishda xatolik: {e}")
-
-    finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-# === Run Bot ===
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+if __name__ == "__main__":
+    main()
